@@ -1,0 +1,2 @@
+export type Track={id:string;name:string;uri:string;artists:string[];artist_ids:string[];album:string;image_url:string|null;release_year:number|null;duration_ms:number;genres:string[];danceability:number|null;acousticness:number|null;energy:number|null;tempo:number|null;key_num:number|null;mode:number|null;time_signature:number|null;valence:number|null};
+export type QueueItem=Track&{submission_id:string;guest_name:string;position:number;pinned:boolean;state:string};
