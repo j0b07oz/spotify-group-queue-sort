@@ -1,8 +1,33 @@
-import {NextRequest,NextResponse} from 'next/server'; import {z} from 'zod'; import {roomByCode,queue} from '@/lib/rooms'; import {db} from '@/lib/db'; import {mix} from '@/lib/queue'; import {syncRoom} from '@/lib/sync';
-const Action=z.discriminatedUnion('action',[
-  z.object({action:z.literal('remove'),id:z.string().uuid()}),
-  z.object({action:z.literal('move'),id:z.string().uuid(),position:z.number().int().nonnegative()}),
-  z.object({action:z.literal('sort')}),
-  z.object({action:z.literal('sync')}),
-]);
-export async function POST(req:NextRequest,{params}:{params:Promise<{code:string}>}){const {code}=await params,r=roomByCode(code);if(!r)return NextResponse.json({error:'Not found'},{status:404});if(req.cookies.get(`host_${code}`)?.value!==r.host_secret)return NextResponse.json({error:'Host access required'},{status:403});try{const b=Action.parse(await req.json());if(b.action==='remove'){const result=db.prepare('DELETE FROM submissions WHERE id=? AND room_id=?').run(b.id,r.id);if(!result.changes)throw new Error('Track not found')}else if(b.action==='move'){const items=queue(r.id),from=items.findIndex(x=>x.submission_id===b.id),to=Math.max(0,Math.min(items.length-1,b.position));if(from<0)throw new Error('Track not found');const [item]=items.splice(from,1);items.splice(to,0,item);db.transaction(()=>items.forEach((x,i)=>db.prepare('UPDATE submissions SET position=?,pinned=? WHERE id=?').run(i,x.submission_id===b.id?1:x.pinned?1:0,x.submission_id)))()}else if(b.action==='sort'){const items=mix(queue(r.id).map(x=>({...x,pinned:false})));db.transaction(()=>items.forEach(x=>db.prepare('UPDATE submissions SET position=?,pinned=0 WHERE id=?').run(x.position,x.submission_id)))()}await syncRoom(r);return NextResponse.json({ok:true})}catch(e){if(e instanceof z.ZodError)return NextResponse.json({error:'Invalid host action'},{status:400});return NextResponse.json({error:e instanceof Error?e.message:'Action failed'},{status:502})}}
+import { NextRequest, NextResponse } from 'next/server';
+import { roomByCode, queue, updatePositions } from '@/lib/rooms';
+import { database, unwrap } from '@/lib/db';
+import { mix } from '@/lib/queue';
+import { syncRoom } from '@/lib/sync';
+
+export async function POST(req: NextRequest, { params }: { params: Promise<{ code: string }> }) {
+  const { code } = await params;
+  const room = await roomByCode(code);
+  if (!room) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (req.cookies.get(`host_${code}`)?.value !== room.host_secret) return NextResponse.json({ error: 'Host access required' }, { status: 403 });
+  const body = await req.json();
+  try {
+    if (body.action === 'remove') {
+      unwrap(await database().from('submissions').delete().eq('id', body.id).eq('room_id', room.id));
+      await updatePositions(await queue(room.id));
+    } else if (body.action === 'move') {
+      const items = await queue(room.id);
+      const from = items.findIndex(item => item.submission_id === body.id);
+      const to = Math.max(0, Math.min(items.length - 1, Number(body.position)));
+      if (from < 0) throw new Error('Track not found');
+      const [item] = items.splice(from, 1);
+      items.splice(to, 0, item);
+      await updatePositions(items, body.id);
+    } else if (body.action === 'sort') {
+      await updatePositions(mix((await queue(room.id)).map(item => ({ ...item, pinned: false }))), '');
+    } else if (body.action !== 'sync') throw new Error('Unknown action');
+    await syncRoom(room);
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Action failed' }, { status: 502 });
+  }
+}

@@ -1,5 +1,25 @@
-import {db} from './db'; import type {QueueItem,Track} from './types';
-export const roomByCode=(code:string)=>db.prepare('SELECT * FROM rooms WHERE share_code=?').get(code) as any;
-export function queue(roomId:string){const rows=db.prepare(`SELECT s.id submission_id,s.guest_name,s.position,s.pinned,s.state,t.* FROM submissions s JOIN tracks t ON t.id=s.track_id WHERE s.room_id=? AND s.state='upcoming' ORDER BY s.position`).all(roomId) as any[];return rows.map(r=>({...r,artists:JSON.parse(r.artists),artist_ids:JSON.parse(r.artist_ids),genres:JSON.parse(r.genres),pinned:!!r.pinned})) as QueueItem[]}
-export function saveTrack(t:Track){db.prepare(`INSERT INTO tracks(id,name,uri,artist_ids,artists,album,image_url,release_year,duration_ms,explicit,genres,danceability,acousticness,energy,tempo,key_num,mode,time_signature,valence) VALUES(@id,@name,@uri,@artist_ids,@artists,@album,@image_url,@release_year,@duration_ms,@explicit,@genres,@danceability,@acousticness,@energy,@tempo,@key_num,@mode,@time_signature,@valence)
-ON CONFLICT(id) DO UPDATE SET name=excluded.name,uri=excluded.uri,artist_ids=excluded.artist_ids,artists=excluded.artists,album=excluded.album,image_url=excluded.image_url,release_year=excluded.release_year,duration_ms=excluded.duration_ms`).run({...t,artist_ids:JSON.stringify(t.artist_ids),artists:JSON.stringify(t.artists),genres:JSON.stringify(t.genres),explicit:0})}
+import 'server-only';
+import { database, unwrap } from './db';
+import type { QueueItem, Track } from './types';
+
+export async function roomByCode(code: string) {
+  return unwrap(await database().from('rooms').select('*').eq('share_code', code).maybeSingle());
+}
+
+export async function queue(roomId: string): Promise<QueueItem[]> {
+  const rows = unwrap(await database().from('submissions').select('id,guest_name,position,pinned,state,tracks(*)').eq('room_id', roomId).eq('state', 'upcoming').order('position')) as any[];
+  return rows.map(({ tracks, id, ...submission }) => ({ ...tracks, ...submission, submission_id: id }));
+}
+
+export async function saveTrack(track: Track) {
+  unwrap(await database().from('tracks').upsert({ ...track, explicit: false }, { onConflict: 'id' }).select('id').single());
+}
+
+export async function updatePositions(items: QueueItem[], pinnedId?: string) {
+  const client = database();
+  await Promise.all(items.map(async (item, position) => {
+    const values: { position: number; pinned?: boolean } = { position };
+    if (pinnedId !== undefined) values.pinned = item.submission_id === pinnedId;
+    unwrap(await client.from('submissions').update(values).eq('id', item.submission_id));
+  }));
+}
