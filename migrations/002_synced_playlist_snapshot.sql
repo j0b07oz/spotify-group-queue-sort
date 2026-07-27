@@ -1,0 +1,1 @@
+ALTER TABLE rooms ADD COLUMN synced_uris TEXT NOT NULL DEFAULT '[]';
