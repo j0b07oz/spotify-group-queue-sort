@@ -5,10 +5,10 @@ A collaborative Spotify party queue built with Next.js, TypeScript, and SQLite. 
 ## Architecture
 
 - **Next.js App Router** serves the responsive room UI and same-origin JSON endpoints.
-- **SQLite / better-sqlite3** stores rooms, encrypted OAuth credentials, Spotify track snapshots, ordering state, and sync health. Versioned SQL files in `migrations/` are applied at startup.
+- **SQLite / better-sqlite3** stores rooms, encrypted OAuth credentials, Spotify track snapshots, ordering state, the last successfully synchronized playlist snapshot, and sync health. Versioned SQL files in `migrations/` are tracked and applied once.
 - **OAuth** uses Spotify Authorization Code Flow, an unguessable state value in a secure HttpOnly cookie, exact redirect matching, server-only token exchange, encrypted tokens at rest, and automatic refresh.
 - **Mix engine** greedily minimizes transition distance across genre, year, tempo, key, danceability, acousticness, energy, and valence, with a strong recent-artist penalty. Manual moves are pinned until the host forces a re-sort.
-- **Synchronization** fetches playback state and the playlist snapshot. If this Mixroom playlist is currently playing, it retains every item through the current track and replaces only the upcoming segment. Failures remain visible and can be retried.
+- **Synchronization** fetches playback state and compares it with Mixroom's last successful local playlist snapshot. If this Mixroom playlist is currently playing, it retains every item through the current track and replaces only the upcoming segment. This avoids requesting `playlist-read-private`, keeps the scope list minimal, and stops safely if the host edited the active playlist outside Mixroom.
 
 ## Spotify API limitations that shape the design
 
@@ -16,14 +16,14 @@ A collaborative Spotify party queue built with Next.js, TypeScript, and SQLite. 
 2. Audio Features, Recommendations, and artist-genre availability have changed for newer/development-mode apps. Search results do not include most audio analysis fields. The schema and algorithm accept these fields, but gracefully use neutral defaults when Spotify does not make them available. A production integration can enrich track rows from an approved metadata provider without changing queue ordering APIs.
 3. Spotify’s live queue cannot be read/reordered as a durable collaborative queue. Mixroom therefore persists submissions and maintains a playlist, as requested.
 4. Playback control normally requires Spotify Premium and an active device. Playlist editing itself does not start playback.
-5. Playlist reads/writes are paginated and writes are limited to 100 URIs per request. The synchronizer preserves the current prefix, replaces the first batch, then appends batches of 100.
-6. Playback state may be absent, delayed, private-session affected, or refer to a different context. In that case Mixroom does not guess which track is playing; it rebuilds the Mixroom playlist from its upcoming application queue.
+5. Playlist writes are limited to 100 URIs per request. The synchronizer preserves the current prefix from its last successful snapshot, replaces the first batch, then appends batches of 100.
+6. Playback state may be absent, delayed, private-session affected, or refer to a different context. When another context is active, Mixroom rebuilds its playlist from the upcoming application queue. When the Mixroom playlist is active but its current item is not in the last synchronized snapshot, Mixroom refuses to overwrite it.
 7. Spotify can return `429`; API calls honor `Retry-After` with bounded retry. OAuth, revoked access, invalid/unavailable tracks, and sync errors are returned safely and recorded for the host rather than silently losing submissions.
-8. Development-mode Spotify apps may restrict access to allow-listed users and have platform-specific quotas. Only the host authorizes, reducing that impact on guests.
+8. As of Spotify's February/March 2026 Development Mode changes, playlist creation uses `POST /me/playlists` and playlist writes use `/playlists/{id}/items`; older `/users/{id}/playlists` and `/tracks` forms are not used. Development Mode also requires the app owner to have Premium and limits new apps to five authorized users. Only the host authorizes, reducing that impact on guests.
 
 ## Setup
 
-Requirements: Node.js 20+, npm, and a Spotify developer application.
+Requirements: Node.js 22+ (Node 24 is supported), npm, and a Spotify developer application.
 
 ```bash
 npm install
