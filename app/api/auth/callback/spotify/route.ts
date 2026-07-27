@@ -27,7 +27,7 @@ export async function GET(req:NextRequest){
     const tokens=await exchange(code);
     const me=await spotify('/me',tokens.access_token);
     const playlist=await spotify(
-      `/users/${encodeURIComponent(me.id)}/playlists`,
+      '/me/playlists',
       tokens.access_token,
       {method:'POST',body:JSON.stringify({name:'Mixroom Party Queue',description:'Collaborative queue ordered by Mixroom',public:false})}
     );
