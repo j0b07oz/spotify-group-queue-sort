@@ -13,6 +13,7 @@ create table if not exists public.rooms (
   locked boolean not null default false,
   sync_status text not null default 'idle' check (sync_status in ('idle', 'syncing', 'synced', 'failed')),
   sync_error text,
+  synced_uris jsonb not null default '[]',
   created_at timestamptz not null default now()
 );
 
