@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { roomByCode } from '@/lib/rooms';
+import { queue, roomByCode } from '@/lib/rooms';
 import { roomToken, spotify } from '@/lib/spotify';
 import { syncRoom } from '@/lib/sync';
+import { database, unwrap } from '@/lib/db';
 
 async function hostRoom(req: NextRequest, code: string) {
   const room = await roomByCode(code);
@@ -31,6 +32,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ code
         type: device.type,
         is_active: Boolean(device.is_active),
       }));
+
+    if (playback?.context?.uri === `spotify:playlist:${result.room.playlist_id}` && playback.item?.uri) {
+      const upcoming = await queue(result.room.id);
+      const snapshot = Array.isArray(result.room.synced_uris) ? result.room.synced_uris : [];
+      const currentIndex = snapshot.indexOf(playback.item.uri);
+      if (currentIndex >= 0) {
+        const playedUris = new Set(snapshot.slice(0, currentIndex + 1));
+        const playedIds = upcoming.filter(item => playedUris.has(item.uri)).map(item => item.submission_id);
+        if (playedIds.length) {
+          unwrap(await database().from('submissions').update({ state: 'played' }).eq('room_id', result.room.id).in('id', playedIds));
+        }
+      }
+    }
 
     return NextResponse.json({
       devices,

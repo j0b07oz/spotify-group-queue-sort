@@ -1,6 +1,7 @@
 import 'server-only';
 import {database,unwrap} from './db';
 import {decrypt,encrypt} from './crypto';
+import {parseSpotifyResponse} from './spotify-response';
 
 const BASE='https://api.spotify.com/v1';
 const LOCAL_REDIRECT_URI='http://127.0.0.1:3000/api/auth/callback/spotify';
@@ -66,7 +67,7 @@ export async function spotify(path:string,access:string,init:RequestInit={},atte
   }
   if(response.status===204)return null;
   if(!response.ok)throw new Error(`Spotify API ${method} ${path} ${response.status}: ${(await response.text()).slice(0,180)}`);
-  return response.json();
+  return parseSpotifyResponse(response);
 }
 
 export const scopes=[

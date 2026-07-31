@@ -19,6 +19,18 @@ describe('buildPlaylistPlan',()=>{
     });
   });
 
+  it('does not duplicate the first song when it starts playing',()=>{
+    expect(buildPlaylistPlan(
+      'room',
+      ['first','second'],
+      ['first','second'],
+      {contextUri:'spotify:playlist:room',itemUri:'first'},
+    )).toEqual({
+      prefix:['first'],
+      uris:['first','second'],
+    });
+  });
+
   it('refuses to overwrite an active playlist when its current item is unknown',()=>{
     expect(()=>buildPlaylistPlan(
       'room',

@@ -1,6 +1,7 @@
 import { database, unwrap } from './db';
 import { queue } from './rooms';
 import { roomToken, spotify } from './spotify';
+import { buildPlaylistPlan } from './playlist';
 
 export async function syncRoom(room: any) {
   const client = database();
@@ -18,19 +19,23 @@ export async function syncRoom(room: any) {
       if (!page.items.length || playlistItems.length >= page.total) break;
     }
 
-    let prefix: string[] = [];
-    if (playback?.context?.uri === `spotify:playlist:${room.playlist_id}` && playback.item?.uri) {
-      const index = playlistItems.findIndex((entry: any) => entry.item?.uri === playback.item.uri);
-      if (index >= 0) prefix = playlistItems.slice(0, index + 1).map((entry: any) => entry.item.uri);
-    }
-
-    const uris = [...prefix, ...(await queue(room.id)).map(item => item.uri)];
+    const upcoming = await queue(room.id);
+    const plan = buildPlaylistPlan(
+      room.playlist_id,
+      playlistItems.flatMap((entry: any) => entry.item?.uri ? [entry.item.uri] : []),
+      upcoming.map(item => item.uri),
+      playback ? { contextUri: playback.context?.uri, itemUri: playback.item?.uri } : null,
+    );
     const itemsPath = `/playlists/${room.playlist_id}/items`;
-    await spotify(itemsPath, access, { method: 'PUT', body: JSON.stringify({ uris: uris.slice(0, 100) }) });
-    for (let i = 100; i < uris.length; i += 100) {
-      await spotify(itemsPath, access, { method: 'POST', body: JSON.stringify({ uris: uris.slice(i, i + 100) }) });
+    await spotify(itemsPath, access, { method: 'PUT', body: JSON.stringify({ uris: plan.uris.slice(0, 100) }) });
+    for (let i = 100; i < plan.uris.length; i += 100) {
+      await spotify(itemsPath, access, { method: 'POST', body: JSON.stringify({ uris: plan.uris.slice(i, i + 100) }) });
     }
-    unwrap(await client.from('rooms').update({ sync_status: 'synced', sync_error: null }).eq('id', room.id));
+    const playedIds = upcoming.filter(item => plan.prefix.includes(item.uri)).map(item => item.submission_id);
+    if (playedIds.length) {
+      unwrap(await client.from('submissions').update({ state: 'played' }).eq('room_id', room.id).in('id', playedIds));
+    }
+    unwrap(await client.from('rooms').update({ sync_status: 'synced', sync_error: null, synced_uris: plan.uris }).eq('id', room.id));
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Playlist sync failed';
     unwrap(await client.from('rooms').update({ sync_status: 'failed', sync_error: message }).eq('id', room.id));
